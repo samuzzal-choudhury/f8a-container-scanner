@@ -5,3 +5,4 @@ requests
 requests-futures
 gevent
 docker
+StringIO

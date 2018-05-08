@@ -1,65 +1,41 @@
 apiVersion: v1
 kind: Template
 labels:
-  template: f8a-server-backbone
+  template: f8a-container-scanner
 metadata:
-  name: f8a-server-backbone
+  name: f8a-container-scanner
   annotations:
-    description: f8a-server-backbone
+    description: f8a-container-scanner
 objects:
 - apiVersion: v1
   kind: DeploymentConfig
   metadata:
     labels:
-      service: f8a-server-backbone
-    name: f8a-server-backbone
+      service: f8a-container-scanner
+    name: f8a-container-scanner
   spec:
     replicas: "${{REPLICAS}}"
     selector:
-      service: f8a-server-backbone
+      service: f8a-container-scanner
     template:
       metadata:
         labels:
-          service: f8a-server-backbone
+          service: f8a-container-scanner
       spec:
         containers:
         - command:
           - /bin/entrypoint.sh
           env:
-          - name: BAYESIAN_GREMLIN_HTTP_SERVICE_HOST
-            value: bayesian-gremlin-http
-          - name: BAYESIAN_GREMLIN_HTTP_SERVICE_PORT
-            value: "8182"
-          - name: PGBOUNCER_SERVICE_HOST
-            value: bayesian-pgbouncer
-          - name: PGBOUNCER_SERVICE_PORT
-            value: "5432"
-          - name: LICENSE_SERVICE_HOST
-            value: f8a-license-analysis
-          - name: LICENSE_SERVICE_PORT
-            value: "6162"
-          - name: PGM_SERVICE_HOST
-            value: bayesian-kronos
-          - name: CHESTER_SERVICE_HOST
-            value: f8a-npm-insights
-          - name: PGM_SERVICE_PORT
-            value: "6006"
-          - name: POSTGRESQL_DATABASE
+          - name: RECOMMENDER_API_TOKEN
             valueFrom:
               secretKeyRef:
-                name: coreapi-postgres
-                key: database
-          - name: POSTGRESQL_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: coreapi-postgres
-                key: password
-          - name: POSTGRESQL_USER
-            valueFrom:
-              secretKeyRef:
-                name: coreapi-postgres
-                key: username
+                name: recommender-api-token
+                key: worker
           - name: API_BACKBONE_SERVICE_PORT
+            value: "5000"
+          - name: BAYESIAN_COREAPI_HTTP_SERVICE_HOST
+            value: "bayesian-api"
+          - name: BAYESIAN_COREAPI_HTTP_SERVICE_PORT
             value: "5000"
           - name: API_BACKBONE_SERVICE_TIMEOUT
             value: "60"
@@ -70,7 +46,7 @@ objects:
           - name: FLASK_LOGGING_LEVEL
             value: ${FLASK_LOGGING_LEVEL}
           image: "${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${IMAGE_TAG}"
-          name: f8a-server-backbone
+          name: f8a-container-scanner
           ports:
           - containerPort: ${{API_BACKBONE_SERVICE_PORT}}
           livenessProbe:
@@ -100,8 +76,8 @@ objects:
   kind: Service
   metadata:
     labels:
-      service: f8a-server-backbone
-    name: f8a-server-backbone
+      service: f8a-container-scanner
+    name: f8a-container-scanner
   spec:
     ports:
     - port: ${{API_BACKBONE_SERVICE_PORT}}
@@ -109,16 +85,16 @@ objects:
       targetPort: ${{API_BACKBONE_SERVICE_PORT}}
       protocol: TCP
     selector:
-      service: f8a-server-backbone
+      service: f8a-container-scanner
 - apiVersion: v1
   kind: Route
   metadata:
-    name: f8a-server-backbone
+    name: f8a-container-scanner
   spec:
     host: ${BACKBONE_API_HOSTNAME}
     to:
       kind: Service
-      name: f8a-server-backbone
+      name: f8a-container-scanner
 
 parameters:
 - description: A hostname where the Bayesian API should be exposed (will be auto-generated if empty)
@@ -160,7 +136,7 @@ parameters:
   displayName: Docker image
   required: true
   name: DOCKER_IMAGE
-  value: "fabric8-analytics/f8a-server-backbone"
+  value: "fabric8-analytics/f8a-container-scanner"
 
 - description: Image tag
   displayName: Image tag

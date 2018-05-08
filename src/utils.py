@@ -3,15 +3,18 @@
 from flask import current_app
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+from requests import exceptions
 import requests
 import os
 import docker
-from urllib.parse import urljoin
 import shutil
 
-from f8a_worker.utils import json_serial, MavenCoordinates, parse_gh_repo
-from f8a_worker.process import Git
+from tempfile import TemporaryDirectory
+from pathlib import Path
+from urllib.parse import urljoin
 
+from f8a_worker.process import Git
+from f8a_worker.utils import cwd, peek, parse_gh_repo
 
 COREAPI_SERVER_URL_REST = "http://{host}:{port}".format(
     host=os.environ.get("BAYESIAN_COREAPI_HTTP_SERVICE_HOST", "bayesian-api"),
@@ -68,15 +71,37 @@ def get_session_retry(retries=3, backoff_factor=0.2, status_forcelist=(404, 500,
     session.mount('http://', adapter)
     return session
 
+def get_manifest_file_from_git_repo(git_repo_url):
+    repo = ""
+    with TemporaryDirectory() as workdir:
+        try:
+            repo = Git.clone(url=git_repo_url, path="/tmp/")
+        except Exception as e:
+            print ("Exception %r" % e)
+            raise
+
+        with cwd(repo.repo_path):
+            if peek(Path.cwd().glob("pom.xml")):
+                print ('{}/pom.xml'.format(Path.cwd()))
+                f = open('{}/pom.xml'.format(Path.cwd()))
+                return f
+    return None
+
 
 class GithubRead:
-    CLONED_DIR = "/tmp/stack-analyses-repo-folder"
+    """Class with methods to read information about the package from GitHub."""
+
+    # TODO move into its own module
+    with TemporaryDirectory() as workdir:
+        CLONED_DIR = workdir
+
     PREFIX_GIT_URL = "https://github.com/"
     PREFIX_URL = "https://api.github.com/repos/"
     RAW_FIRST_URL = "https://raw.githubusercontent.com/"
     MANIFEST_TYPES = ["pom.xml", "package.json", "requirements.txt"]
 
     def get_manifest_files(self):
+        """Retrieve manifest files from cloned repository."""
         manifest_file_paths = []
         for base, dirs, files in os.walk(self.CLONED_DIR):
             if '.git' in dirs:
@@ -93,6 +118,7 @@ class GithubRead:
         return manifest_file_paths
 
     def get_manifest_details(self, github_url):
+        """Retrieve manifest files from cloned repository."""
         manifest_data = []
         supported_manifests = {
             'requirements.txt': True,
@@ -105,15 +131,16 @@ class GithubRead:
         else:
             return None
 
-        last_commit_url = 'https://api.github.com/repos/{project}/{repo}/git/refs/heads/master'.format(project=project, repo=repo)
+        last_commit_url = 'https://api.github.com/repos/{project}/{repo}/git/refs/heads/' \
+                          'master'.format(project=project, repo=repo)
         trees_url = 'https://api.github.com/repos/{project}/{repo}/git/trees/{sha}?recursive=1'
         raw_content_path = 'https://raw.githubusercontent.com/{project}/{repo}/master/{filename}'
 
         # Fetch the latest commit of the repo
         try:
             resp = requests.get(last_commit_url)
-        except:
-            print ('Exception in ')
+        except exceptions.RequestException as e:
+            print(e)
             return None
 
         last_commit = ''
@@ -121,21 +148,21 @@ class GithubRead:
             try:
                 last_commit = resp.json()['object']['sha']
             except KeyError as e:
-                print (e)
+                print(e)
                 return None
 
         # Fetch the contents tree using the last commit sha
         try:
             resp = requests.get(trees_url.format(project=project, repo=repo, sha=last_commit))
-        except Exception as e:
-            print (e)
+        except exceptions.RequestException as e:
+            print(e)
             return None
 
         if resp.status_code == 200:
             try:
                 tree = resp.json()['tree']
             except KeyError as e:
-                print (e)
+                print(e)
                 return None
 
         for t in tree:
@@ -143,22 +170,25 @@ class GithubRead:
                 if supported_manifests[os.path.basename(t['path'])]:
                     manifest_data.append({
                         'filename': os.path.basename(t['path']),
-                        'download_url': raw_content_path.format(project=project, repo=repo, filename=t['path']),
+                        'download_url': raw_content_path.format(
+                            project=project, repo=repo, filename=t['path']),
                         'filepath': os.path.dirname(t['path'])
                     })
             except KeyError as e:
-                print (e)
+                print(e)
                 continue
 
+        print(manifest_data)
         return manifest_data
 
     def get_files_github_url(self, github_url):
+        """Clone the repository from GitHub and retrieve manifest files from it."""
         manifest_data = []
         repo_suffix = parse_gh_repo(github_url)
         try:
             self.del_temp_files()
             repo_url = urljoin(self.PREFIX_URL, repo_suffix)
-            check_valid_repo = get(repo_url)
+            check_valid_repo = requests.get(repo_url)
             if check_valid_repo.status_code == 200:
                 repo_clone_url = urljoin(self.PREFIX_GIT_URL, repo_suffix, '.git')
                 Git.clone(repo_clone_url, self.CLONED_DIR)
@@ -174,12 +204,15 @@ class GithubRead:
                         "filepath": filepath.replace(self.CLONED_DIR, '')
                     })
         except Exception as e:
-            raise HTTPError(500, "Error in reading repo from github.")
+            current_app.logger.error("Error in reading repo from github.")
+            raise
         finally:
             self.del_temp_files()
 
         return manifest_data
 
     def del_temp_files(self):
+        """Delete temporary files in the CLONED_DIR repository."""
         if os.path.exists(self.CLONED_DIR):
             shutil.rmtree(self.CLONED_DIR)
+
