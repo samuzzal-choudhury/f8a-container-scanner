@@ -8,7 +8,9 @@ import requests
 import os
 import docker
 import shutil
+import json
 
+from subprocess import check_output
 from tempfile import TemporaryDirectory
 from pathlib import Path
 from urllib.parse import urljoin
@@ -25,7 +27,7 @@ docker_client = docker.from_env()
 def retrieve_image(name):
     try:
         result = docker_client.images.pull(name)
-        print ('%r' % result)
+        print('%r' % result)
     except (docker.errors.BuildError, docker.errors.APIError) as e:
         current_app.logger.error(e)
         raise
@@ -42,23 +44,14 @@ def remove_image(name):
 
 
 def fetch_container_info(name):
-    try:
-        print ('docker run begins')
-        obj = docker.containers.run(name)
-        print ('docker run ends')
-    except (docker.errors.ContainerError, docker.errors.ImageNotFound,
-            docker.errors.APIError) as e:
-        current_app.logger.error(e)
-        raise
-
     command = 'cat /etc/redhat-release'
-    result = {'os': obj.exec_run(command)}
+    result = {'os': docker_client.containers.run(name, command).decode('utf-8')}
     current_app.logger.info('Container is running on OS %r' % result['os'])
 
-    command = 'yum list updates'
-    current_app.logger.info('Report of outdated packages')
-    result['outdated'] = obj.exec_run(command)
-    current_app.logger.info(result['outdated'])
+    command = 'docker inspect {image}'.format(image=name)
+    data = check_output(command.split()).decode('utf-8')
+    j = json.loads(data)
+    result['git-url'] = j[0]['Config']['Labels']['git-url']
 
 
 def get_session_retry(retries=3, backoff_factor=0.2, status_forcelist=(404, 500, 502, 504),
@@ -70,6 +63,7 @@ def get_session_retry(retries=3, backoff_factor=0.2, status_forcelist=(404, 500,
     adapter = HTTPAdapter(max_retries=retry)
     session.mount('http://', adapter)
     return session
+
 
 def get_manifest_file_from_git_repo(git_repo_url):
     repo = ""
